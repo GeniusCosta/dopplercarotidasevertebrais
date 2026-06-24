@@ -1,4 +1,4 @@
-#NCOR — Laudos de Doppler de Carótidas e Vertebrais
+# ENCOR — Laudos de Doppler de Carótidas e Vertebrais
 
 Gerador de laudos de **ultrassonografia com Doppler de carótidas e vertebrais**, em arquivo HTML único, sem servidor e sem dependências de instalação. Roda inteiramente no navegador, com identidade visual da **Encor — Núcleo de Endocrinologia e Cardiologia**.
 
