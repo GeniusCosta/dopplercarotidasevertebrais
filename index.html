@@ -584,7 +584,8 @@ button{cursor:pointer;border:none;background:none}
       <!-- ⑥ BANCO -->
       <div id="tp-banco" class="tab-pane">
         <div class="bank-tools">
-          <button onclick="doExport()">⬇ Exportar JSON</button>
+          <button onclick="doExport()" title="Salva só o exame aberto">⬇ Exportar exame</button>
+          <button onclick="doExportBank()" title="Backup de todos os pacientes do banco (reimportável em Importar JSON)">⬇ Exportar banco</button>
           <button onclick="doImport()">⬆ Importar JSON</button>
           <input type="file" id="import-file" accept=".json" style="display:none" onchange="onImportFile(event)">
         </div>
@@ -2344,7 +2345,7 @@ function getBank() { return bankCache.slice(); }
 // grava a lista: put dos presentes, delete dos removidos. Retorna Promise<boolean> (true = gravou)
 function svBank(b) {
   const antes = new Set(bankCache.map(p => p.id)), agora = new Set(b.map(p => p.id));
-  bankCache = b.slice();
+  bankCache = b.slice().sort(bankOrdem);   // sempre do mais recente para o mais antigo
   return bankTx(st => {
     b.forEach(p => { if (p && p.id) st.put(p, p.id); });
     antes.forEach(id => { if (!agora.has(id)) st.delete(id); });
@@ -2429,6 +2430,19 @@ function doExport() {
   const a = document.createElement('a');
   a.href = u; a.download = `dopcar_${(d.nome||'paciente').replace(/\s+/g,'_')}_${(d.data||'').replace(/-/g,'')}.json`;
   a.click(); URL.revokeObjectURL(u);
+}
+
+// backup do banco inteiro (lista de registros) — o "Importar JSON" aceita este arquivo
+async function doExportBank() {
+  try { await bankReady; } catch (e) {}
+  const bank = getBank();
+  if (!bank.length) { toast('Nenhum paciente no banco para exportar.'); return; }
+  const bl = new Blob([JSON.stringify(bank, null, 2)], { type: 'application/json' });
+  const u = URL.createObjectURL(bl);
+  const a = document.createElement('a');
+  a.href = u; a.download = `dopcar_banco_${new Date().toLocaleDateString("sv-SE")}.json`;   // data local (AAAA-MM-DD)
+  a.click(); URL.revokeObjectURL(u);
+  toast(`✓ Banco exportado (${bank.length} paciente(s))`);
 }
 
 /* ════════════════════════════════════════════════════════════
