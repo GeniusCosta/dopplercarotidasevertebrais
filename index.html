@@ -2301,8 +2301,60 @@ function swTab(id) {
    PATIENT BANK
    ════════════════════════════════════════════════════════════ */
 const DB = 'dopcar_encor_v_carotida01';
-function getBank() { return JSON.parse(localStorage.getItem(DB)||'[]'); }
-function svBank(b) { localStorage.setItem(DB, JSON.stringify(b)); }
+/* v.banco-idb: o banco de pacientes passou do localStorage para o IndexedDB.
+   O localStorage tem ~5 MB DIVIDIDOS com todos os programas publicados em geniuscosta.github.io
+   (Doppler, ECG, eco, fetal…); quando enchia, o Salvar falhava em silêncio. A lista continua em
+   memória (getBank() síncrono, mais recente primeiro) e cada gravação vai para o IndexedDB.
+   Na primeira abertura os registros antigos do localStorage são migrados e a chave antiga é apagada. */
+const BANK_DB = 'dopcar_pacientes', BANK_STORE = 'p';
+let bankCache = [], _bankDb = null;
+function bankDb() {
+  return _bankDb || (_bankDb = new Promise((res, rej) => {
+    const r = indexedDB.open(BANK_DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(BANK_STORE);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => { _bankDb = null; rej(r.error); };
+  }));
+}
+function bankTx(fn) {
+  return bankDb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(BANK_STORE, 'readwrite'); fn(tx.objectStore(BANK_STORE));
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+  }));
+}
+const bankOrdem = (a, b) => (b.savedAt || '').localeCompare(a.savedAt || '') || String(b.id || '').localeCompare(String(a.id || ''));
+function bankRecarrega() {
+  return bankDb().then(db => new Promise((res, rej) => {
+    const q = db.transaction(BANK_STORE, 'readonly').objectStore(BANK_STORE).getAll();
+    q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error);
+  }));
+}
+const bankReady = (async () => {
+  try {
+    let old = null; try { old = JSON.parse(localStorage.getItem(DB) || 'null'); } catch (e) { old = null; }
+    if (Array.isArray(old) && old.length) await bankTx(st => old.forEach(p => { if (p && p.id) st.put(p, p.id); }));
+    if (old !== null) { try { localStorage.removeItem(DB); } catch (e) {} }
+    const all = await bankRecarrega();
+    const ids = new Set(bankCache.map(p => p.id));   // mantém o que já tiver sido salvo antes de abrir
+    bankCache = bankCache.concat(all.filter(p => !ids.has(p.id))).sort(bankOrdem);
+    if (document.getElementById('bank-list')) renderBank();
+  } catch (e) { console.error('[Banco]', e); setTimeout(() => toast('⚠ Não foi possível abrir o banco de pacientes: ' + (e.message || e.name || e), 6000), 500); }
+})();
+function getBank() { return bankCache.slice(); }
+// grava a lista: put dos presentes, delete dos removidos. Retorna Promise<boolean> (true = gravou)
+function svBank(b) {
+  const antes = new Set(bankCache.map(p => p.id)), agora = new Set(b.map(p => p.id));
+  bankCache = b.slice();
+  return bankTx(st => {
+    b.forEach(p => { if (p && p.id) st.put(p, p.id); });
+    antes.forEach(id => { if (!agora.has(id)) st.delete(id); });
+  }).then(() => true).catch(e => {
+    console.error('[Banco]', e);
+    bankRecarrega().then(all => { bankCache = all.sort(bankOrdem); }).catch(() => {});   // volta a refletir só o gravado
+    toast('⚠ Não foi possível gravar no banco: ' + (e.message || e.name || e), 6000);
+    return false;
+  });
+}
 
 function collect() {
   return {
@@ -2325,8 +2377,7 @@ function saveP() {
   const bank = getBank();
   const idx = bank.findIndex(p => p.nome === d.nome && p.data === d.data && d.nome);
   if (idx >= 0) { d.id = bank[idx].id; bank[idx] = d; } else bank.unshift(d);
-  svBank(bank);
-  toast('✓ Paciente salvo');
+  svBank(bank).then(ok => { if (ok) toast('✓ Paciente salvo'); });
 }
 
 function loadP(id) {
@@ -2349,8 +2400,7 @@ function loadP(id) {
 
 function delP(id) {
   if (!confirm('Excluir este registro?')) return;
-  svBank(getBank().filter(p => p.id !== id));
-  renderBank();
+  svBank(getBank().filter(p => p.id !== id)).then(() => renderBank());
 }
 
 function renderBank() {
@@ -2759,9 +2809,7 @@ function onImportFile(e) {
         if (exists >= 0) bank[exists] = p; else bank.unshift(p);
         imported++;
       });
-      svBank(bank);
-      renderBank();
-      toast(`✓ Importado(s) ${imported} registro(s)`);
+      svBank(bank).then(ok => { renderBank(); if (ok) toast(`✓ Importado(s) ${imported} registro(s)`); });
     } catch (err) {
       toast('Erro ao importar: ' + err.message);
     }
